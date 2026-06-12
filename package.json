@@ -1,13 +1,13 @@
 {
     "name": "nitlix-seal",
-    "version": "0.0.11",
+    "version": "0.0.12",
     "author": "nitlix-hq",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/nitlix/nitlix-seal.git"
+        "url": "https://github.com/nitlix-hq/Seal.git"
     },
-    "homepage": "https://github.com/nitlix/nitlix-seal",
+    "homepage": "https://github.com/nitlix-hq/Seal",
     "description": "Nitlix Seal",
     "module": "./dist/exports.js",
     "main": "./dist/exports.js",
