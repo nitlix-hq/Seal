@@ -34,20 +34,24 @@ type IdentityRecord = {
     };
 };
 
+/** Throws when IndexedDB is unavailable in the current runtime. */
 function ensureIndexedDBAvailable() {
     if (typeof (globalThis as any).indexedDB === "undefined") {
         throw new Error("IndexedDB is unavailable in this runtime.");
     }
 }
 
+/** Overwrites a byte array in place to reduce key-material lifetime in memory. */
 function zero(bytes: Uint8Array) {
     bytes.fill(0);
 }
 
+/** Normalizes an ArrayBuffer-like input into a Uint8Array view. */
 function toBytes(input: ArrayBuffer | Uint8Array): Uint8Array {
     return input instanceof Uint8Array ? input : new Uint8Array(input);
 }
 
+/** Opens the identity IndexedDB database and creates the store on first use. */
 async function openIdentityDB(): Promise<any> {
     ensureIndexedDBAvailable();
 
@@ -66,6 +70,7 @@ async function openIdentityDB(): Promise<any> {
     });
 }
 
+/** Persists the current identity record to IndexedDB. */
 async function putIdentityRecord(record: IdentityRecord): Promise<void> {
     const db = await openIdentityDB();
 
@@ -82,6 +87,7 @@ async function putIdentityRecord(record: IdentityRecord): Promise<void> {
     db.close();
 }
 
+/** Loads the current identity record from IndexedDB if present. */
 async function getIdentityRecord(): Promise<IdentityRecord | null> {
     const db = await openIdentityDB();
 
@@ -98,6 +104,7 @@ async function getIdentityRecord(): Promise<IdentityRecord | null> {
     return record;
 }
 
+/** Deletes the current identity record from IndexedDB. */
 async function deleteIdentityRecord(): Promise<void> {
     const db = await openIdentityDB();
 
@@ -119,6 +126,7 @@ export default class SealClient {
     public PRIK: string;
     private ukKey?: CryptoKey;
 
+    /** Creates a client with optional in-memory UK and PRIK values. */
     public constructor(
         { UK = "", PRIK = "" }: { UK?: string; PRIK?: string } = {},
     ) {
@@ -126,6 +134,7 @@ export default class SealClient {
         this.PRIK = PRIK;
     }
 
+    /** Initializes client keys from IndexedDB and returns availability flags. */
     public async initialise(): Promise<{
         UK: boolean;
         PRIK: boolean;
@@ -181,7 +190,8 @@ export default class SealClient {
         }
     }
 
-    public async writeKeyMap({
+    /** Stores UK and UK(PRIK) in IndexedDB and updates in-memory key state. */
+    public async writeoff({
         UK,
         PRIK,
         PUIK,
@@ -237,30 +247,37 @@ export default class SealClient {
         }
     }
 
+    /** Generates a new 24-word seed phrase. */
     public generateSeedphrase(): ReturnType<typeof generateSeedphrase> {
         return generateSeedphrase();
     }
 
+    /** Derives UK from a seed phrase. */
     public deriveUK(seedPhrase: string): ReturnType<typeof deriveUK> {
         return deriveUK(seedPhrase);
     }
 
+    /** Derives PUIK/PRIK from a seed phrase. */
     public deriveIKP(seedPhrase: string): ReturnType<typeof deriveIKP> {
         return deriveIKP(seedPhrase);
     }
 
+    /** Generates a new content key. */
     public generateCK(): ReturnType<typeof generateCK> {
         return generateCK();
     }
 
+    /** Generates a new identity key pair. */
     public generateKeyPair(): ReturnType<typeof generateKeyPair> {
         return generateKeyPair();
     }
 
+    /** Backward-compatible alias for deriving the identity key pair. */
     public deriveIdentityKeyPair(seedPhrase: string): ReturnType<typeof deriveIKP> {
         return deriveIKP(seedPhrase);
     }
 
+    /** Seals CK to a recipient PUIK for sharing. */
     public async wrapInPUIK(
         CK: string,
         PUIK: string,
@@ -268,7 +285,8 @@ export default class SealClient {
         return wrapCKInPUIK({ CK, PUIK });
     }
 
-    public async encrypt({
+    /** Encrypts plaintext content with a provided CK. */
+    public async encryptWithCK({
         content,
         CK,
     }: {
@@ -278,7 +296,8 @@ export default class SealClient {
         return encryptContentWithCK({ content, CK });
     }
 
-    public async decrypt({
+    /** Decrypts ciphertext content with a provided CK. */
+    public async decryptWithCK({
         content,
         CK,
     }: {
@@ -288,6 +307,61 @@ export default class SealClient {
         return decryptContentWithCK({ content, CK });
     }
 
+    /** Encrypts content and returns ciphertext plus CK wrapped with UK. */
+    public async encryptContent({
+        content,
+        CK = "",
+    }: {
+        content: string;
+        CK?: string;
+    }): Promise<{ "CK-UK": string; ciphertext: string }> {
+        const resolvedCK = CK.trim() ? CK : this.generateCK().CK;
+        const [{ "CK-UK": CK_UK }, { content: ciphertext }] = await Promise.all([
+            this.wrapWithUK(resolvedCK),
+            this.encryptWithCK({ content, CK: resolvedCK }),
+        ]);
+
+        return {
+            "CK-UK": CK_UK,
+            ciphertext,
+        };
+    }
+
+    /** Decrypts content from a CK-UK wrap and ciphertext pair. */
+    public async decryptContent({
+        "CK-UK": CK_UK,
+        ciphertext,
+    }: {
+        "CK-UK": string;
+        ciphertext: string;
+    }): ReturnType<typeof decryptContentWithCK> {
+        const { CK } = await this.unwrapWithUK(CK_UK);
+        return this.decryptWithCK({ content: ciphertext, CK });
+    }
+
+    /** Backward-compatible alias for encryptWithCK. */
+    public async encrypt({
+        content,
+        CK,
+    }: {
+        content: string;
+        CK: string;
+    }): ReturnType<typeof encryptContentWithCK> {
+        return this.encryptWithCK({ content, CK });
+    }
+
+    /** Backward-compatible alias for decryptWithCK. */
+    public async decrypt({
+        content,
+        CK,
+    }: {
+        content: string;
+        CK: string;
+    }): ReturnType<typeof decryptContentWithCK> {
+        return this.decryptWithCK({ content, CK });
+    }
+
+    /** Unseals CK from a CK-PUIK payload using the current PRIK. */
     public async unwrapInPRIK(
         CK_PUIK: string,
     ): ReturnType<typeof unwrapCKPUIKInPRIK> {
@@ -297,11 +371,13 @@ export default class SealClient {
         });
     }
 
-    private async wrap(CK: string): ReturnType<typeof wrapCKWithUK> {
+    /** Wraps CK with the current UK. */
+    public async wrapWithUK(CK: string): ReturnType<typeof wrapCKWithUK> {
         return wrapCKWithUK({ CK, UK: this.UK, ukKey: this.ukKey });
     }
 
-    private async unwrap(CK_UK: string): ReturnType<typeof unwrapCKUK> {
+    /** Unwraps CK from a CK-UK payload using the current UK. */
+    public async unwrapWithUK(CK_UK: string): ReturnType<typeof unwrapCKUK> {
         return unwrapCKUK({
             "CK-UK": CK_UK,
             UK: this.UK,
